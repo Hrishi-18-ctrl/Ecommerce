@@ -3,11 +3,9 @@ package com.ecommerce.sb_ecom.service;
 import com.ecommerce.sb_ecom.DTO.AddressRequest;
 import com.ecommerce.sb_ecom.DTO.AddressResponse;
 import com.ecommerce.sb_ecom.DTO.SellerAddressRequest;
-import com.ecommerce.sb_ecom.exceptions.DuplicateAddressTypeException;
+import com.ecommerce.sb_ecom.exceptions.InvalidRequestException;
 import com.ecommerce.sb_ecom.exceptions.SellerAddressNotFoundException;
 import com.ecommerce.sb_ecom.exceptions.SellerNotFoundException;
-import com.ecommerce.sb_ecom.model.Customer;
-import com.ecommerce.sb_ecom.model.CustomerAddress;
 import com.ecommerce.sb_ecom.model.Seller;
 import com.ecommerce.sb_ecom.model.SellerAddress;
 import com.ecommerce.sb_ecom.repository.SellerAddressRepository;
@@ -32,26 +30,11 @@ public class SellerAddressService {
         List<AddressResponse> addressResponseList = new ArrayList<>();
 
         for(SellerAddress address : addressList){
-            AddressResponse addressResponse = new AddressResponse();
-            addressResponse.setId(address.getId());
-            addressResponse.setSellerId(address.getSeller().getId());
-            addressResponse.setLine1(address.getLine1());
-            addressResponse.setLine2(address.getLine2());
-            addressResponse.setCity(address.getCity());
-            addressResponse.setState(address.getState());
-            addressResponse.setCountry(address.getCountry());
-            addressResponse.setPinCode(address.getPinCode());
-            addressResponse.setCreatedAt(address.getCreatedAt());
-            addressResponse.setUpdatedAt(address.getUpdatedAt());
-
-            addressResponseList.add(addressResponse);
+            addressResponseList.add(toResponse(address));
         }
 
         return addressResponseList;
     }
-
-
-
 
 
 //    CREATE ADDRESS
@@ -59,7 +42,12 @@ public class SellerAddressService {
         Seller seller = sellerRepository.findById(addressRequest.getSellerId())
                 .orElseThrow(() -> new SellerNotFoundException("Seller with id " + addressRequest.getSellerId() + " not found"));
 
-
+        // A seller has exactly one address (Seller.address is a @OneToOne). Without this
+        // check a second create hit the database's unique constraint on seller_id and
+        // surfaced as a bare 500.
+        if (seller.getAddress() != null) {
+            throw new InvalidRequestException("This seller already has an address. Edit it instead.");
+        }
 
         SellerAddress address = new SellerAddress();
         address.setLine1(addressRequest.getLine1());
@@ -70,28 +58,12 @@ public class SellerAddressService {
         address.setPinCode(addressRequest.getPinCode());
         address.setSeller(seller);
 
-        SellerAddress savedSellerAddress = sellerAddressRepository.save(address);
-        AddressResponse addressResponse = new AddressResponse();
-        addressResponse.setId(savedSellerAddress.getId());
-        addressResponse.setSellerId(savedSellerAddress.getSeller().getId());
-        addressResponse.setLine1(savedSellerAddress.getLine1());
-        addressResponse.setLine2(savedSellerAddress.getLine2());
-        addressResponse.setCity(savedSellerAddress.getCity());
-        addressResponse.setState(savedSellerAddress.getState());
-        addressResponse.setCountry(savedSellerAddress.getCountry());
-        addressResponse.setPinCode(savedSellerAddress.getPinCode());
-        addressResponse.setCreatedAt(savedSellerAddress.getCreatedAt());
-        addressResponse.setUpdatedAt(savedSellerAddress.getUpdatedAt());
-
-        return addressResponse;
-
-
+        return toResponse(sellerAddressRepository.save(address));
     }
 
 
 //    UPDATE ADDRESS
     public AddressResponse updateAddress(String id, AddressRequest addressRequest) {
-        //        customerAddress existing check
         SellerAddress address = sellerAddressRepository.findById(id)
                 .orElseThrow(() -> new SellerAddressNotFoundException("seller Address with id " + id + " not found"));
 
@@ -119,22 +91,7 @@ public class SellerAddressService {
             address.setPinCode(addressRequest.getPinCode());
         }
 
-
-        SellerAddress savedSellerAddress = sellerAddressRepository.save(address);
-
-        AddressResponse addressResponse = new AddressResponse();
-        addressResponse.setId(savedSellerAddress.getId());
-        addressResponse.setCustomerId(savedSellerAddress.getSeller().getId());
-        addressResponse.setLine1(savedSellerAddress.getLine1());
-        addressResponse.setLine2(savedSellerAddress.getLine2());
-        addressResponse.setCity(savedSellerAddress.getCity());
-        addressResponse.setState(savedSellerAddress.getState());
-        addressResponse.setCountry(savedSellerAddress.getCountry());
-        addressResponse.setPinCode(savedSellerAddress.getPinCode());
-        addressResponse.setCreatedAt(savedSellerAddress.getCreatedAt());
-        addressResponse.setUpdatedAt(savedSellerAddress.getUpdatedAt());
-
-        return addressResponse;
+        return toResponse(sellerAddressRepository.save(address));
     }
 
 
@@ -145,18 +102,32 @@ public class SellerAddressService {
 
         SellerAddress address = seller.getAddress();
 
-        AddressResponse addressResponse = new AddressResponse();
-        addressResponse.setId(address.getId());
-        addressResponse.setCustomerId(address.getSeller().getId());
-        addressResponse.setLine1(address.getLine1());
-        addressResponse.setLine2(address.getLine2());
-        addressResponse.setCity(address.getCity());
-        addressResponse.setState(address.getState());
-        addressResponse.setCountry(address.getCountry());
-        addressResponse.setPinCode(address.getPinCode());
-        addressResponse.setCreatedAt(address.getCreatedAt());
-        addressResponse.setUpdatedAt(address.getUpdatedAt());
+        // Was: address.getId() on a null address -> NullPointerException -> 500 for every
+        // seller who hasn't added an address yet (i.e. every new seller). A clear 404 lets
+        // a client tell "no address yet" apart from a real server error.
+        if (address == null) {
+            throw new SellerAddressNotFoundException("seller with id " + id + " has no address yet");
+        }
 
-        return addressResponse;
+        return toResponse(address);
+    }
+
+
+    // One place that builds the response, so every endpoint fills the same fields.
+    // (The old update/get code put the seller's id into customerId and left sellerId
+    // null; both are now set from the address's seller.)
+    private AddressResponse toResponse(SellerAddress address) {
+        AddressResponse response = new AddressResponse();
+        response.setId(address.getId());
+        response.setSellerId(address.getSeller().getId());
+        response.setLine1(address.getLine1());
+        response.setLine2(address.getLine2());
+        response.setCity(address.getCity());
+        response.setState(address.getState());
+        response.setCountry(address.getCountry());
+        response.setPinCode(address.getPinCode());
+        response.setCreatedAt(address.getCreatedAt());
+        response.setUpdatedAt(address.getUpdatedAt());
+        return response;
     }
 }

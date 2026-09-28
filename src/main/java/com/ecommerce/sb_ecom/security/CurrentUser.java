@@ -6,6 +6,7 @@ import com.ecommerce.sb_ecom.repository.CustomerAddressRepository;
 import com.ecommerce.sb_ecom.repository.CustomerRepository;
 import com.ecommerce.sb_ecom.repository.OrderRepository;
 import com.ecommerce.sb_ecom.repository.ProductRepository;
+import com.ecommerce.sb_ecom.repository.SellerAddressRepository;
 import com.ecommerce.sb_ecom.repository.SellerRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
@@ -30,6 +31,7 @@ public class CurrentUser {
     private final CustomerAddressRepository customerAddressRepository;
     private final OrderRepository orderRepository;
     private final SellerRepository sellerRepository;
+    private final SellerAddressRepository sellerAddressRepository;
     private final ProductRepository productRepository;
 
     private UserPrincipal principal() {
@@ -82,6 +84,22 @@ public class CurrentUser {
         return sellerRepository.findByUserId(principal().getId())
                 .map(seller -> seller.getId())
                 .orElseThrow(() -> new AccessDeniedException("This account has no seller profile."));
+    }
+
+    /** Is this the signed-in seller's own seller id? (Admins pass for any.) */
+    public void assertOwnsSeller(String sellerId) {
+        if (isAdmin()) return;
+        if (sellerId == null || !sellerId().equals(sellerId)) throw deny();
+    }
+
+    /** Does this seller address belong to the signed-in seller? (Admins pass for any.) */
+    public void assertOwnsSellerAddress(String addressId) {
+        if (isAdmin()) return;
+        String sellerId = sellerId();
+        boolean owns = addressId != null && sellerAddressRepository.findById(addressId)
+                .map(address -> address.getSeller() != null && sellerId.equals(address.getSeller().getId()))
+                .orElse(false);
+        if (!owns) throw deny();
     }
 
     /**
